@@ -44,44 +44,28 @@ vehicle_manager = VehicleManager(
 def authorize_request():
     return request.headers.get("Authorization") == SECRET_KEY
 
-
 def ensure_authenticated():
     """
-    Attempt to refresh Kia token.
-    Will fail if Kia requires OTP / captcha.
+    Force token refresh; raises AuthenticationError if Kia requires 2FA.
     """
     try:
-        vehicle_manager.check_and_refresh_token()
+        vehicle_manager.check_and_refresh_token(force=True)
     except AuthenticationError as e:
         raise AuthenticationError(
-            "Kia authentication failed. "
-            "Open the Kia app and complete 2FA, then retry."
+            "Kia authentication failed. Open the Kia app and complete 2FA, then retry."
         ) from e
 
-
 def refresh_and_sync():
-    """
-    Refresh token and sync vehicle state
-    """
     ensure_authenticated()
     vehicle_manager.update_all_vehicles_with_cached_state()
 
-
 def get_vehicle_id():
-    """
-    Return VEHICLE_ID if provided, otherwise
-    dynamically select the first vehicle.
-    """
     if VEHICLE_ID:
         return VEHICLE_ID
-
     vehicles = vehicle_manager.vehicles
     if not vehicles:
         raise ValueError("No vehicles found on the Kia account.")
-
-    first_vehicle_id = next(iter(vehicles.keys()))
-    return first_vehicle_id
-
+    return next(iter(vehicles.keys()))
 
 # =========================
 # Logging
@@ -90,23 +74,17 @@ def get_vehicle_id():
 def log_request_info():
     print(f"Incoming request: {request.method} {request.path}")
 
-
 # =========================
 # Routes
 # =========================
 @app.route("/", methods=["GET"])
 def root():
-    return jsonify({
-        "status": "OK",
-        "service": "Kia Vehicle Control API"
-    }), 200
-
+    return jsonify({"status": "OK", "service": "Kia Vehicle Control API"}), 200
 
 @app.route("/auth_status", methods=["GET"])
 def auth_status():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
     try:
         ensure_authenticated()
         return jsonify({"status": "authenticated"}), 200
@@ -116,160 +94,105 @@ def auth_status():
             "message": str(e)
         }), 401
 
-
 @app.route("/list_vehicles", methods=["GET"])
 def list_vehicles():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
     try:
         refresh_and_sync()
-
         vehicles = vehicle_manager.vehicles
         if not vehicles:
             return jsonify({"error": "No vehicles found"}), 404
-
         vehicle_list = [
-            {
-                "name": v.name,
-                "id": v.id,
-                "model": v.model,
-                "year": v.year
-            }
+            {"name": v.name, "id": v.id, "model": v.model, "year": v.year}
             for v in vehicles.values()
         ]
-
-        return jsonify({
-            "status": "success",
-            "vehicles": vehicle_list
-        }), 200
-
+        return jsonify({"status": "success", "vehicles": vehicle_list}), 200
     except AuthenticationError as e:
         return jsonify({
             "error": "Authentication failed",
             "details": str(e),
             "action": "Open Kia app and complete 2FA"
         }), 401
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/start_climate", methods=["POST"])
 def start_climate():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
+    _ = request.get_json(silent=True)
     try:
         refresh_and_sync()
         vehicle_id = get_vehicle_id()
-
-        climate_options = ClimateRequestOptions(
-            set_temp=72,
-            duration=10
-        )
-
+        climate_options = ClimateRequestOptions(set_temp=72, duration=10)
         result = vehicle_manager.start_climate(vehicle_id, climate_options)
-
-        return jsonify({
-            "status": "climate_started",
-            "result": result
-        }), 200
-
+        return jsonify({"status": "climate_started", "result": result}), 200
     except AuthenticationError as e:
         return jsonify({
             "error": "Authentication failed",
             "details": str(e),
             "action": "Open Kia app and complete 2FA"
         }), 401
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/stop_climate", methods=["POST"])
 def stop_climate():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
+    _ = request.get_json(silent=True)
     try:
         refresh_and_sync()
         vehicle_id = get_vehicle_id()
-
         result = vehicle_manager.stop_climate(vehicle_id)
-
-        return jsonify({
-            "status": "climate_stopped",
-            "result": result
-        }), 200
-
+        return jsonify({"status": "climate_stopped", "result": result}), 200
     except AuthenticationError as e:
         return jsonify({
             "error": "Authentication failed",
             "details": str(e),
             "action": "Open Kia app and complete 2FA"
         }), 401
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/unlock_car", methods=["POST"])
 def unlock_car():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
-      # ignore complètement le corps de la requête si présent
     _ = request.get_json(silent=True)
-
     try:
         refresh_and_sync()
         vehicle_id = get_vehicle_id()
-
         result = vehicle_manager.unlock(vehicle_id)
-
-        return jsonify({
-            "status": "car_unlocked",
-            "result": result
-        }), 200
-
+        return jsonify({"status": "car_unlocked", "result": result}), 200
     except AuthenticationError as e:
         return jsonify({
             "error": "Authentication failed",
             "details": str(e),
             "action": "Open Kia app and complete 2FA"
         }), 401
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/lock_car", methods=["POST"])
 def lock_car():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
-
+    _ = request.get_json(silent=True)
     try:
         refresh_and_sync()
         vehicle_id = get_vehicle_id()
-
         result = vehicle_manager.lock(vehicle_id)
-
-        return jsonify({
-            "status": "car_locked",
-            "result": result
-        }), 200
-
+        return jsonify({"status": "car_locked", "result": result}), 200
     except AuthenticationError as e:
         return jsonify({
             "error": "Authentication failed",
             "details": str(e),
             "action": "Open Kia app and complete 2FA"
         }), 401
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # =========================
 # App Entry
