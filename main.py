@@ -219,6 +219,9 @@ def unlock_car():
     if not authorize_request():
         return jsonify({"error": "Unauthorized"}), 403
 
+      # ignore complètement le corps de la requête si présent
+    _ = request.get_json(silent=True)
+
     try:
         refresh_and_sync()
         vehicle_id = get_vehicle_id()
