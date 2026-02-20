@@ -46,11 +46,11 @@ def authorize_request():
 
 def ensure_authenticated():
     """
-    Attempt to refresh Kia token.
-    Will raise AuthenticationError if Kia requires 2FA.
+    Refresh Kia token.
+    Raises AuthenticationError if Kia requires 2FA.
     """
     try:
-        vehicle_manager.check_and_refresh_token()  # plus de force=True
+        vehicle_manager.check_and_refresh_token()  # ✅ pas de force=True
     except AuthenticationError as e:
         raise AuthenticationError(
             "Kia authentication failed. Open the Kia app and complete 2FA, then retry."
