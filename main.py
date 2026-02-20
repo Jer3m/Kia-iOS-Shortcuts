@@ -50,7 +50,7 @@ def ensure_authenticated():
     Raises AuthenticationError if Kia requires 2FA.
     """
     try:
-        vehicle_manager.check_and_refresh_token()  # ✅ pas de force=True
+        vehicle_manager.check_and_refresh_token()  # pas de force=True
     except AuthenticationError as e:
         raise AuthenticationError(
             "Kia authentication failed. Open the Kia app and complete 2FA, then retry."
@@ -81,6 +81,24 @@ def log_request_info():
 @app.route("/", methods=["GET"])
 def root():
     return jsonify({"status": "OK", "service": "Kia Vehicle Control API"}), 200
+
+@app.route("/check_token", methods=["GET"])
+def check_token():
+    """
+    Vérifie si le token Kia est encore valide.
+    Retourne 200 si OK, 401 si Kia nécessite 2FA.
+    """
+    if not authorize_request():
+        return jsonify({"error": "Unauthorized"}), 403
+    try:
+        ensure_authenticated()
+        return jsonify({"status": "token_valid"}), 200
+    except AuthenticationError as e:
+        return jsonify({
+            "status": "token_invalid",
+            "details": str(e),
+            "action": "Open Kia app and complete 2FA"
+        }), 401
 
 @app.route("/auth_status", methods=["GET"])
 def auth_status():
