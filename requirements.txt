@@ -1,3 +1,3 @@
-Flask
+flask
 hyundai-kia-connect-api
-requests
+upstash-redis
