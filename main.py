@@ -1,204 +1,108 @@
 import os
+import json
 from flask import Flask, request, jsonify
 from hyundai_kia_connect_api import VehicleManager, ClimateRequestOptions
 from hyundai_kia_connect_api.exceptions import AuthenticationError
+import upstash_redis
 
 app = Flask(__name__)
 
-# =========================
-# Environment Variables
-# =========================
+# Initialisation du client Redis (Vercel KV)
+kv = upstash_redis.Redis.from_env()
+
+# Variables d'environnement
 USERNAME = os.environ.get("KIA_USERNAME")
 PASSWORD = os.environ.get("KIA_PASSWORD")
 PIN = os.environ.get("KIA_PIN")
 SECRET_KEY = os.environ.get("SECRET_KEY")
-VEHICLE_ID = os.environ.get("VEHICLE_ID")  # Optional
 
-missing = []
-if not USERNAME:
-    missing.append("KIA_USERNAME")
-if not PASSWORD:
-    missing.append("KIA_PASSWORD")
-if not PIN:
-    missing.append("KIA_PIN")
-if not SECRET_KEY:
-    missing.append("SECRET_KEY")
+def get_vehicle_manager():
+    """Initialise le manager et charge le cache depuis Redis s'il existe."""
+    vm = VehicleManager(
+        region=1, brand=1, 
+        username=USERNAME, password=PASSWORD, pin=str(PIN)
+    )
+    
+    cached_session = kv.get("kia_session_cache")
+    if cached_session:
+        try:
+            # Si le cache est une chaîne (JSON), on le charge
+            vm.set_session_cache(cached_session)
+        except Exception as e:
+            print(f"Erreur chargement cache: {e}")
+            
+    return vm
 
-if missing:
-    raise ValueError(f"Missing environment variables: {', '.join(missing)}")
-
-# =========================
-# Vehicle Manager
-# =========================
-vehicle_manager = VehicleManager(
-    region=1,  # Europe
-    brand=1,   # KIA
-    username=USERNAME,
-    password=PASSWORD,
-    pin=str(PIN)
-)
-
-# =========================
-# Helper Functions
-# =========================
-def authorize_request():
-    return request.headers.get("Authorization") == SECRET_KEY
-
-def ensure_authenticated(force_refresh=False):
-    """
-    Rafraîchit le token Kia.
-    Si force_refresh=True, tente de générer un nouveau token.
-    Lève AuthenticationError si Kia exige 2FA.
-    """
+def save_session_cache(vm):
+    """Sauvegarde l'état actuel de la session dans Redis."""
     try:
-        if force_refresh:
-            vehicle_manager.logout()  # Déconnecte l’ancien token si possible
-        vehicle_manager.check_and_refresh_token()  # Vérifie ou rafraîchit le token
-    except AuthenticationError as e:
-        raise AuthenticationError(
-            "Kia authentication failed. Open the Kia app and complete 2FA, then retry."
-        ) from e
+        session_data = vm.get_session_cache()
+        kv.set("kia_session_cache", session_data)
+    except Exception as e:
+        print(f"Erreur sauvegarde cache: {e}")
 
-def refresh_and_sync():
-    ensure_authenticated()
-    vehicle_manager.update_all_vehicles_with_cached_state()
+def authorize(req):
+    return req.headers.get("Authorization") == SECRET_KEY
 
-def get_vehicle_id():
-    if VEHICLE_ID:
-        return VEHICLE_ID
-    vehicles = vehicle_manager.vehicles
-    if not vehicles:
-        raise ValueError("No vehicles found on the Kia account.")
-    return next(iter(vehicles.keys()))
+# --- ROUTES ---
 
-# =========================
-# Logging
-# =========================
-@app.before_request
-def log_request_info():
-    print(f"Incoming request: {request.method} {request.path}")
-
-# =========================
-# Routes
-# =========================
 @app.route("/", methods=["GET"])
-def root():
-    return jsonify({"status": "OK", "service": "Kia Vehicle Control API"}), 200
-
-@app.route("/check_token", methods=["GET"])
-def check_token():
-    """
-    Vérifie si le token Kia est valide.
-    """
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    try:
-        ensure_authenticated()
-        return jsonify({"status": "token_valid"}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "status": "token_invalid",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-
-@app.route("/refresh_token", methods=["POST"])
-def refresh_token():
-    """
-    Tente de régénérer le token Kia automatiquement.
-    """
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    try:
-        ensure_authenticated(force_refresh=True)
-        return jsonify({"status": "token_refreshed"}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "status": "token_invalid",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
+def index():
+    return jsonify({"status": "online", "message": "Kia API with KV Cache"}), 200
 
 @app.route("/unlock_car", methods=["POST"])
-def unlock_car():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    _ = request.get_json(silent=True)
+def unlock():
+    if not authorize(request): return jsonify({"error": "Unauthorized"}), 403
     try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-        result = vehicle_manager.unlock(vehicle_id)
-        return jsonify({"status": "car_unlocked", "result": result}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
+        vm = get_vehicle_manager()
+        vm.check_and_refresh_token()
+        vm.update_all_vehicles_with_cached_state()
+        
+        vehicle_id = next(iter(vm.vehicles.keys()))
+        result = vm.unlock(vehicle_id)
+        
+        save_session_cache(vm)
+        return jsonify({"status": "unlocked", "result": str(result)}), 200
+    except AuthenticationError:
+        return jsonify({"error": "2FA_REQUIRED", "action": "Ouvrez l'app Kia Connect"}), 401
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/lock_car", methods=["POST"])
-def lock_car():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    _ = request.get_json(silent=True)
+def lock():
+    if not authorize(request): return jsonify({"error": "Unauthorized"}), 403
     try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-        result = vehicle_manager.lock(vehicle_id)
-        return jsonify({"status": "car_locked", "result": result}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
+        vm = get_vehicle_manager()
+        vm.check_and_refresh_token()
+        vm.update_all_vehicles_with_cached_state()
+        
+        vehicle_id = next(iter(vm.vehicles.keys()))
+        result = vm.lock(vehicle_id)
+        
+        save_session_cache(vm)
+        return jsonify({"status": "locked", "result": str(result)}), 200
+    except AuthenticationError:
+        return jsonify({"error": "2FA_REQUIRED"}), 401
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route("/start_climate", methods=["POST"])
 def start_climate():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    _ = request.get_json(silent=True)
+    if not authorize(request): return jsonify({"error": "Unauthorized"}), 403
     try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-        climate_options = ClimateRequestOptions(set_temp=72, duration=10)
-        result = vehicle_manager.start_climate(vehicle_id, climate_options)
-        return jsonify({"status": "climate_started", "result": result}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
+        vm = get_vehicle_manager()
+        vm.check_and_refresh_token()
+        vm.update_all_vehicles_with_cached_state()
+        
+        vehicle_id = next(iter(vm.vehicles.keys()))
+        # Réglage par défaut : 21°C (70°F environ)
+        options = ClimateRequestOptions(set_temp=21, duration=10)
+        result = vm.start_climate(vehicle_id, options)
+        
+        save_session_cache(vm)
+        return jsonify({"status": "climate_started", "result": str(result)}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/stop_climate", methods=["POST"])
-def stop_climate():
-    if not authorize_request():
-        return jsonify({"error": "Unauthorized"}), 403
-    _ = request.get_json(silent=True)
-    try:
-        refresh_and_sync()
-        vehicle_id = get_vehicle_id()
-        result = vehicle_manager.stop_climate(vehicle_id)
-        return jsonify({"status": "climate_stopped", "result": result}), 200
-    except AuthenticationError as e:
-        return jsonify({
-            "error": "Authentication failed",
-            "details": str(e),
-            "action": "Open Kia app and complete 2FA"
-        }), 401
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# =========================
-# App Entry
-# =========================
 if __name__ == "__main__":
-    print("Starting Kia Vehicle Control API...")
     app.run(host="0.0.0.0", port=8080)
