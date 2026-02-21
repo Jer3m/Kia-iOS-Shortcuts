@@ -13,8 +13,8 @@ app = Flask(__name__)
 
 # Initialisation Redis avec les noms exacts vus sur ta capture Vercel
 kv = upstash_redis.Redis(
-    url=os.environ.get("KV_REST_API_URL"), 
-    token=os.environ.get("KV_REST_API_TOKEN")
+    url=os.environ.get("UPSTASH_REDIS_REST_URL"), 
+    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 )
 
 # Variables d'environnement Kia
