@@ -3,10 +3,10 @@ from flask import Flask, request, jsonify
 from hyundai_kia_connect_api import VehicleManager, ClimateRequestOptions
 import upstash_redis
 
-# Initialisation Flask
+# Initialisation de l'application
 app = Flask(__name__)
 
-# Initialisation Redis
+# Configuration Redis
 kv = upstash_redis.Redis(
     url=os.environ.get("UPSTASH_REDIS_REST_URL"), 
     token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
@@ -48,8 +48,9 @@ def unlock():
         kv.set("kia_session_cache", vm.get_session_cache())
         return jsonify({"status": "success", "action": "unlocked"}), 200
     except Exception as e:
-        err = str(e).lower()
-        if "2fa" in err or "mfa" in err or "auth" in err:
+        # On attrape l'erreur de manière générique pour éviter les problèmes d'import
+        error_str = str(e).lower()
+        if "2fa" in error_str or "mfa" in error_str or "auth" in error_str:
             return jsonify({"error": "2FA_REQUIRED", "details": str(e)}), 401
         return jsonify({"error": str(e)}), 500
 
