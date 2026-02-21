@@ -16,12 +16,13 @@ PIN = os.environ.get("KIA_PIN")
 SECRET_KEY = os.environ.get("SECRET_KEY")
 
 def get_vehicle_manager():
-    # On initialise sans forcer la connexion immédiate
+    # Initialisation sans connexion forcée
     vm = VehicleManager(
         region=1, brand=1, 
         username=USERNAME, password=PASSWORD, pin=str(PIN)
     )
     
+    # On vérifie si on a un token en cache
     cached_session = kv.get("kia_session_cache")
     if cached_session:
         try:
@@ -33,7 +34,7 @@ def get_vehicle_manager():
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "online", "message": "Ready for Refresh Token"}), 200
+    return jsonify({"status": "online", "message": "Ready"}), 200
 
 @app.route("/unlock_car", methods=["POST"])
 def unlock():
@@ -42,25 +43,25 @@ def unlock():
     
     vm = get_vehicle_manager()
     try:
-        # Cette ligne est cruciale : elle va essayer de transformer 
-        # tes identifiants en "Refresh Token"
+        # On force la mise à jour du token (indispensable maintenant)
         vm.check_and_refresh_token() 
-        
         vm.update_all_vehicles_with_cached_state()
+        
+        if not vm.vehicles:
+            return jsonify({"error": "No vehicles found"}), 404
+            
         vehicle_id = next(iter(vm.vehicles.keys()))
         vm.unlock(vehicle_id)
         
-        # Sauvegarde immédiate du précieux token dans Redis
+        # On sauvegarde le jeton tout de suite après succès
         kv.set("kia_session_cache", vm.get_session_cache())
-        return jsonify({"status": "success", "action": "unlocked"}), 200
+        return jsonify({"status": "success"}), 200
     
     except Exception as e:
-        err = str(e)
-        # Si Kia demande le token, on capture l'erreur pour voir si un 2FA est proposé
         return jsonify({
-            "error": "AUTH_STEP_REQUIRED",
-            "message": "Kia refuse le mot de passe direct",
-            "details": err
+            "error": "AUTH_FAILED",
+            "details": str(e),
+            "hint": "Essayez de vous deconnecter/reconnecter sur l'app Kia mobile"
         }), 401
 
 if __name__ == "__main__":
