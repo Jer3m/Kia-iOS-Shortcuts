@@ -19,16 +19,24 @@ PIN = os.environ.get("KIA_PIN")
 SECRET_KEY = os.environ.get("SECRET_KEY")
 
 def get_vehicle_manager():
+    # On force la région Europe (1) et la marque Kia (1)
     vm = VehicleManager(
         region=1, brand=1, 
         username=USERNAME, password=PASSWORD, pin=str(PIN)
     )
+    
+    # On tente de récupérer une session existante
     try:
         cached_session = kv.get("kia_session_cache")
         if cached_session:
             vm.set_session_cache(cached_session)
+            return vm
     except:
         pass
+
+    # Si pas de cache, on tente une connexion fraîche
+    # Cette ligne va déclencher l'envoi du jeton ou le 2FA
+    vm.check_and_refresh_token() 
     return vm
 
 @app.route("/", methods=["GET"])
