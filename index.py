@@ -1,9 +1,9 @@
 import os
-import json
 from flask import Flask, request, jsonify
 from hyundai_kia_connect_api import VehicleManager, ClimateRequestOptions
 import upstash_redis
 
+# Initialisation Flask
 app = Flask(__name__)
 
 # Initialisation Redis
@@ -31,12 +31,6 @@ def get_vehicle_manager():
         pass
     return vm
 
-def save_session(vm):
-    try:
-        kv.set("kia_session_cache", vm.get_session_cache())
-    except:
-        pass
-
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "online", "message": "Kia API Ready"}), 200
@@ -51,14 +45,13 @@ def unlock():
         vm.update_all_vehicles_with_cached_state()
         vehicle_id = next(iter(vm.vehicles.keys()))
         vm.unlock(vehicle_id)
-        save_session(vm)
+        kv.set("kia_session_cache", vm.get_session_cache())
         return jsonify({"status": "success", "action": "unlocked"}), 200
     except Exception as e:
-        # Si c'est une erreur de 2FA, le message contiendra "MFA" ou "auth"
-        error_msg = str(e)
-        if "MFA" in error_msg or "auth" in error_msg.lower():
-            return jsonify({"error": "2FA_REQUIRED", "details": error_msg}), 401
-        return jsonify({"error": error_msg}), 500
+        err = str(e).lower()
+        if "2fa" in err or "mfa" in err or "auth" in err:
+            return jsonify({"error": "2FA_REQUIRED", "details": str(e)}), 401
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/lock_car", methods=["POST"])
 def lock():
@@ -70,7 +63,7 @@ def lock():
         vm.update_all_vehicles_with_cached_state()
         vehicle_id = next(iter(vm.vehicles.keys()))
         vm.lock(vehicle_id)
-        save_session(vm)
+        kv.set("kia_session_cache", vm.get_session_cache())
         return jsonify({"status": "success", "action": "locked"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
